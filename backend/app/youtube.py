@@ -5,6 +5,8 @@ import re
 import httpx
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
+    IpBlocked,
+    RequestBlocked,
     NoTranscriptFound,
     TranscriptsDisabled,
     VideoUnavailable,
@@ -48,18 +50,37 @@ def fetch_title(video_id: str) -> str:
     return ""
 
 
+def _base_lang(code: str) -> str:
+    return code.split("-")[0].lower()
+
+
+def _pick_track(tracks: list):
+    """Choose the caption track in the language actually spoken in the video.
+
+    Videos like TED talks carry dozens of human-made translations, so "first manual
+    track" can be a translation. YouTube auto-generates captions only in the spoken
+    language, which tells us what that language is.
+    """
+    if not tracks:
+        return None
+    manual = [t for t in tracks if not t.is_generated]
+    generated = [t for t in tracks if t.is_generated]
+    if generated:
+        spoken = _base_lang(generated[0].language_code)
+        same_lang = [t for t in manual if _base_lang(t.language_code) == spoken]
+        return same_lang[0] if same_lang else generated[0]
+    if len(manual) == 1:
+        return manual[0]
+    # Several manual tracks and no hint of the spoken language: English is most likely the original.
+    english = [t for t in manual if _base_lang(t.language_code) == "en"]
+    return english[0] if english else manual[0]
+
+
 def fetch_transcript(video_id: str) -> tuple[str, list[dict]]:
-    """Return (language_code, segments). Prefers manual captions, then any language."""
+    """Return (language_code, segments) in the video's spoken language when possible."""
     api = YouTubeTranscriptApi()
     try:
-        transcripts = api.list(video_id)
-        chosen = None
-        for t in transcripts:
-            if not t.is_generated:
-                chosen = t
-                break
-        if chosen is None:
-            chosen = next(iter(transcripts), None)
+        chosen = _pick_track(list(api.list(video_id)))
         if chosen is None:
             raise NoTranscriptFound(video_id, [], transcripts)
         fetched = chosen.fetch()
@@ -70,6 +91,12 @@ def fetch_transcript(video_id: str) -> tuple[str, list[dict]]:
         )
     except VideoUnavailable:
         raise VideoError("unavailable", "This video is unavailable or private.")
+    except (RequestBlocked, IpBlocked):
+        # YouTube refuses many requests from hosting providers' servers (it takes them for bots).
+        raise VideoError(
+            "blocked",
+            "YouTube refused to give our server this video's captions. Paste the transcript instead.",
+        )
     except VideoError:
         raise
     except Exception as e:  # network blocks, YouTube changes, etc.

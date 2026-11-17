@@ -32,10 +32,27 @@
   --color-danger: var(--danger);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-quran: var(--font-amiri-quran);
+  --font-arabic: var(--font-amiri);
 }
 
 body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* The word (or quote) being spoken in the full text. */
+.tafrigh-current {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 0.25rem;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* The word being spoken inside a quote (verse, hadith, athar): inverted, so it stands out from the quote's color. */
+.tafrigh-current-quote {
+  background: var(--fg);
+  color: var(--bg);
+  border-radius: 0.2rem;
+  box-shadow: 0 0 0 2px var(--fg);
 }

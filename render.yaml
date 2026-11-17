@@ -1,0 +1,41 @@
+# Render Blueprint: in Render, choose New → Blueprint and pick this repository.
+# Everything here runs on Render's free plan.
+services:
+  # The Python API (FastAPI). Free web services sleep after 15 minutes without visitors
+  # and take about a minute to wake; the page shows a "waking up" message meanwhile.
+  - type: web
+    name: you-resumer-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    # The Qur'an and hadith data are downloaded and indexed during the build, so they are
+    # part of the deployed files (a free service's disk is erased on every restart).
+    buildCommand: pip install uv && uv sync --frozen && uv run python -m app.sources
+    startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.1
+      # Saved videos and results: a free Neon Postgres URL, entered in Render's dashboard
+      # (never committed). Without it the app still works but forgets results on each restart.
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_HOST
+        fromService:
+          type: web
+          name: you-resumer
+          property: host
+
+  # The page (Next.js exported as static files). Free static sites never sleep.
+  - type: web
+    name: you-resumer
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: out
+    envVars:
+      - key: API_HOST
+        fromService:
+          type: web
+          name: you-resumer-api
+          property: host

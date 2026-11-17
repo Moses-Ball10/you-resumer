@@ -5,9 +5,11 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.163.1",
     "httpx>=0.28.1",
+    "psycopg[binary]>=3.3.9",
     "pydantic-settings>=2.16.3",
     "rank-bm25>=0.2.2",
     "sqlmodel>=0.0.50",
+    "typst>=0.15.2",
     "uvicorn[standard]>=0.54.0",
     "youtube-transcript-api>=1.2.5",
 ]
