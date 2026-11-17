@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, loadVideo, type Video } from "@/lib/api";
+import { ApiError, loadVideo, uploadVideo, type Video } from "@/lib/api";
 import { useAdillah } from "@/lib/adillah";
 import { useKeys } from "@/lib/keys";
+import { DeviceCaptionError, fetchCaptionsOnDevice, isNativeApp } from "@/lib/native";
 import { useTaskQueue } from "@/lib/queue";
 import { AdillahPanel } from "@/components/AdillahPanel";
 import { ChatPanel, type ChatStore } from "@/components/ChatPanel";
@@ -16,6 +17,13 @@ import { SummaryPanel, type SummaryStore } from "@/components/SummaryPanel";
 import { Tafrigh } from "@/components/Tafrigh";
 
 const MAX_VIDEOS = 5;
+
+/** The 11-character video id in a YouTube link (same patterns as the backend). */
+function extractVideoId(link: string): string | null {
+  const m = link.match(/(?:v=|\/v\/|youtu\.be\/|\/embed\/|\/shorts\/|\/live\/)([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{11}$/.test(link.trim()) ? link.trim() : null;
+}
 
 export default function Home() {
   const [videos, setVideos] = useState<Video[]>([]);
@@ -65,6 +73,30 @@ export default function Home() {
     setShowForm(false);
   }
 
+  /**
+   * In the installed app: a saved copy if the server has one, otherwise the captions are fetched
+   * on this device (YouTube does not block phones) and sent to the server.
+   */
+  async function loadInApp(link: string): Promise<Video> {
+    try {
+      return await loadVideo(link, true);
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== "not_cached") throw err;
+    }
+    const id = extractVideoId(link);
+    if (!id) throw new ApiError("invalid_url", "This does not look like a YouTube link.");
+    try {
+      const { language, segments } = await fetchCaptionsOnDevice(id);
+      return await uploadVideo(link, language, segments);
+    } catch (err) {
+      if (err instanceof DeviceCaptionError) {
+        // "blocked" and "failed" fall through to the paste box; the others are final.
+        throw new ApiError(err.code === "failed" ? "fetch_failed" : err.code, err.message);
+      }
+      throw err;
+    }
+  }
+
   async function add(e: React.FormEvent) {
     e.preventDefault();
     if (!url.trim() || loading) return;
@@ -72,7 +104,7 @@ export default function Home() {
     setError("");
     setPasteFor("");
     try {
-      addVideo(await loadVideo(url));
+      addVideo(isNativeApp() ? await loadInApp(url) : await loadVideo(url));
     } catch (err) {
       if (err instanceof ApiError && (err.code === "blocked" || err.code === "fetch_failed")) {
         setPasteFor(url.trim()); // YouTube refused our server: the visitor pastes the transcript

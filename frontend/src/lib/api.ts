@@ -45,11 +45,23 @@ async function readError(r: Response): Promise<ApiError> {
   }
 }
 
-export async function loadVideo(url: string): Promise<Video> {
+/** Loads a video. With `cachedOnly`, the server only returns a saved copy (404 "not_cached" otherwise). */
+export async function loadVideo(url: string, cachedOnly = false): Promise<Video> {
   const r = await fetch(api("/api/videos"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ url, cached_only: cachedOnly }),
+  });
+  if (!r.ok) throw await readError(r);
+  return r.json();
+}
+
+/** A video whose captions the installed app fetched on the visitor's device. */
+export async function uploadVideo(url: string, language: string, segments: Segment[]): Promise<Video> {
+  const r = await fetch(api("/api/videos/upload"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, language, segments }),
   });
   if (!r.ok) throw await readError(r);
   return r.json();

@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     custom_api_key: str = ""
     custom_model: str = ""
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # The local dev page, and the installed app (Capacitor serves the page from these origins).
+    cors_origins: list[str] = ["http://localhost:3000", "https://localhost", "capacitor://localhost"]
     # On Render, the static site's host name (set by render.yaml); it is added to cors_origins.
     frontend_host: str = ""
 

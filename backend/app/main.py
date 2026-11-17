@@ -111,6 +111,7 @@ def _save_video(session: Session, video_id: str, title: str, language: str, segm
 
 class LoadVideoIn(BaseModel):
     url: str = Field(max_length=500)
+    cached_only: bool = False  # the app asks for a saved copy first, then fetches captions itself
 
 
 @app.post("/api/videos")
@@ -120,6 +121,8 @@ async def load_video(body: LoadVideoIn, request: Request, session: Session = Dep
         cached = session.get(Video, video_id)
         if cached:
             return _video_out(cached)
+        if body.cached_only:
+            raise VideoError("not_cached", "This video has not been loaded before.")
         _limit(request, "videos", settings.videos_per_hour)
         language, segments = await run_in_threadpool(fetch_transcript, video_id)
         _check_length(segments)
@@ -127,6 +130,42 @@ async def load_video(body: LoadVideoIn, request: Request, session: Session = Dep
     except VideoError as e:
         raise _error(422, e.code, e.message)
     return _video_out(_save_video(session, video_id, title, language, segments, "captions"))
+
+
+class SegmentIn(BaseModel):
+    start: float = Field(ge=0)
+    duration: float = Field(ge=0)
+    text: str = Field(max_length=2000)
+
+
+class UploadIn(BaseModel):
+    url: str = Field(max_length=500)
+    language: str = Field(default="", max_length=20)
+    segments: list[SegmentIn] = Field(min_length=1, max_length=30_000)
+
+
+@app.post("/api/videos/upload")
+async def upload_video(body: UploadIn, request: Request, session: Session = Depends(get_session)):
+    """A video whose captions the installed app fetched on the visitor's device (YouTube does not block it)."""
+    try:
+        video_id = extract_video_id(body.url)
+        cached = session.get(Video, video_id)
+        if cached:
+            return _video_out(cached)
+        _limit(request, "videos", settings.videos_per_hour)
+        segments = [
+            {"start": round(s.start, 2), "duration": round(s.duration, 2), "text": " ".join(s.text.split())}
+            for s in sorted(body.segments, key=lambda s: s.start)
+            if s.text.strip()
+        ]
+        if not segments:
+            raise VideoError("no_captions", "This video's captions are empty.")
+        _check_length(segments)
+        title = await run_in_threadpool(fetch_title, video_id)
+    except VideoError as e:
+        raise _error(422, e.code, e.message)
+    language = body.language or guess_language(segments)
+    return _video_out(_save_video(session, video_id, title, language, segments, "device"))
 
 
 class PasteIn(BaseModel):
