@@ -88,11 +88,58 @@ _SPOKEN_TIME = re.compile(
 )
 
 
+# Words YouTube uses in the spoken label after each time ("1 minute, 8 seconds", "دقيقة واحدة و8 ثوانٍ").
+_UNITS = {
+    # Longer forms first, so "ثوانٍ" is not read as "ثوان" plus a stray mark.
+    3600: r"hours?|ساعتان|ساعتين|ساعات|ساعة",
+    60: r"minutes?|دقيقتان|دقيقتين|دقائق|دقيقة",
+    1: r"seconds?|ثانيتان|ثانيتين|ثوانٍ|ثواني|ثوان|ثانية",
+}
+_UNIT = "|".join(_UNITS.values())
+# A time, glued to its spoken label: "0:000 seconds", "1:081 minute, 8 seconds", "1:02:031 hour, 2 minutes, 3 seconds".
+_GLUED = re.compile(
+    r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})"
+    r"((?:\s*(?:\d+\s*)?(?:" + _UNIT + r")(?:\s*واحدة)?[,،]?\s*(?:و\s*)?)+)"
+)
+_PART = re.compile(r"(\d+)?\s*(" + _UNIT + r")")
+_TAGS = re.compile(r"\[(?:music|applause|laughter|موسيقى|تصفيق|ضحك)\]", re.IGNORECASE)
+
+
+def _label_seconds(label: str) -> int:
+    total = 0
+    for count, unit in _PART.findall(label):
+        size = next(k for k, words in _UNITS.items() if re.fullmatch(words, unit))
+        total += int(count or 1) * size  # "دقيقة واحدة" has no number
+    return total
+
+
+def _segments(entries: list[list]) -> list[dict]:
+    entries = [[t, _TAGS.sub("", words).strip()] for t, words in entries]
+    entries = [e for e in entries if e[1]]
+    segments = []
+    for i, (start, words) in enumerate(entries):
+        end = entries[i + 1][0] if i + 1 < len(entries) else start + max(2, len(words) / 12)
+        segments.append({"start": float(start), "duration": round(max(end - start, 0.5), 2), "text": words})
+    return segments
+
+
 def parse_pasted(text: str) -> list[dict]:
     """Segments from a transcript copied from YouTube's "Show transcript" panel.
 
-    Accepts a timestamp alone on its line followed by the text, or both on the same line.
+    Two copy formats exist: each time on its own line, or the time glued to its spoken label
+    and the text ("1:081 minute, 8 secondsعن مسروق…"), sometimes several on one line. In the glued
+    one a time counts only when its label says the same time, so numbers in the speech are kept.
     """
+    glued = []
+    for m in _GLUED.finditer(text):
+        h, mnt, sec, label = m.groups()
+        start = int(h or 0) * 3600 + int(mnt) * 60 + int(sec)
+        if _label_seconds(label) == start:
+            glued.append((m.start(), m.end(), start))
+    if len(glued) >= 2:
+        entries = [[start, text[end : glued[k + 1][0] if k + 1 < len(glued) else len(text)]] for k, (_, end, start) in enumerate(glued)]
+        return _segments([[t, " ".join(w.split())] for t, w in entries])
+
     entries: list[list] = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -104,12 +151,7 @@ def parse_pasted(text: str) -> list[dict]:
             entries.append([int(h or 0) * 3600 + int(mnt) * 60 + int(sec), rest.strip()])
         elif entries:
             entries[-1][1] = (entries[-1][1] + " " + line).strip()
-    entries = [e for e in entries if e[1]]
-    segments = []
-    for i, (start, words) in enumerate(entries):
-        end = entries[i + 1][0] if i + 1 < len(entries) else start + max(2, len(words) / 12)
-        segments.append({"start": float(start), "duration": round(max(end - start, 0.5), 2), "text": words})
-    return segments
+    return _segments(entries)
 
 
 def guess_language(segments: list[dict]) -> str:
